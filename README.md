@@ -1,4 +1,4 @@
-# Parallel yt-dlp
+# Simple Parallel yt-dlp
 
 Downloader interativo de vídeos e playlists que executa vários downloads em paralelo.
 
