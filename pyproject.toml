@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "parallel-ytdlp"
+version = "0.1.0"
+description = "Downloader paralelo de vídeos e playlists com yt-dlp."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "yt-dlp[default]",
+]
+
+[project.scripts]
+parallel-ytdlp = "parallel_ytdlp.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
