@@ -1,5 +1,6 @@
 import os
 import shutil
+import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -14,20 +15,59 @@ PASTA_DOWNLOAD = "downloads"
 print_lock = threading.Lock()
 
 
+def _executavel_funciona(caminho):
+    try:
+        subprocess.run(
+            [str(caminho), "-version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+            timeout=10,
+        )
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _diretorio_ffmpeg_valido(bin_dir):
+    bin_dir = Path(bin_dir)
+    ffmpeg = bin_dir / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    ffprobe = bin_dir / ("ffprobe.exe" if os.name == "nt" else "ffprobe")
+    return _executavel_funciona(ffmpeg) and _executavel_funciona(ffprobe)
+
+
 def encontrar_ffmpeg():
-    """Retorna o diretório do FFmpeg, priorizando o PATH."""
+    """Retorna a localização do FFmpeg; string vazia significa usar o PATH."""
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
-    if ffmpeg and ffprobe:
-        return str(Path(ffmpeg).resolve().parent)
+    if ffmpeg and ffprobe and _executavel_funciona(ffmpeg) and _executavel_funciona(ffprobe):
+        ffmpeg_dir = Path(ffmpeg).resolve().parent
+        ffprobe_dir = Path(ffprobe).resolve().parent
+        return str(ffmpeg_dir) if ffmpeg_dir == ffprobe_dir else ""
 
-    candidatos = [
-        Path.cwd() / "tools" / "ffmpeg" / "bin",
-        Path(__file__).resolve().parents[2] / "tools" / "ffmpeg" / "bin",
-    ]
+    raizes = [Path.cwd(), Path(__file__).resolve().parents[2]]
+    candidatos = [raiz / "tools" / "ffmpeg" / "bin" for raiz in raizes]
+
+    for raiz in raizes:
+        arquivo_localizacao = raiz / "tools" / "ffmpeg-location.txt"
+        if arquivo_localizacao.is_file():
+            try:
+                candidatos.append(Path(arquivo_localizacao.read_text(encoding="utf-8-sig").strip()))
+            except OSError:
+                pass
+
     for bin_dir in candidatos:
-        if (bin_dir / "ffmpeg.exe").is_file() and (bin_dir / "ffprobe.exe").is_file():
+        if _diretorio_ffmpeg_valido(bin_dir):
             return str(bin_dir)
+
+    if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        winget = Path(os.environ["LOCALAPPDATA"]) / "Microsoft" / "WinGet" / "Packages"
+        try:
+            for executavel in winget.glob("Gyan.FFmpeg*/**/bin/ffmpeg.exe"):
+                if _diretorio_ffmpeg_valido(executavel.parent):
+                    return str(executavel.parent)
+        except OSError:
+            pass
 
     return None
 
@@ -209,10 +249,12 @@ def tentar_novamente(falhas, configuracao, ffmpeg_location):
 def main():
     print("=" * 60 + "\n      YT-DLP DOWNLOADER\n" + "=" * 60)
     ffmpeg_location = encontrar_ffmpeg()
-    if ffmpeg_location:
+    if ffmpeg_location is None:
+        print("\nAviso: FFmpeg/FFprobe não foram encontrados. Execute setup.ps1.")
+    elif ffmpeg_location:
         print(f"\nFFmpeg: {ffmpeg_location}")
     else:
-        print("\nAviso: FFmpeg/FFprobe não foram encontrados. Execute setup.ps1.")
+        print("\nFFmpeg e FFprobe encontrados no PATH.")
 
     url = input("\nURL do vídeo ou playlist: ").strip()
     configuracao = configurar_download()
