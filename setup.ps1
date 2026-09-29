@@ -8,6 +8,8 @@ $ToolsRoot = Join-Path $ProjectRoot "tools"
 $FfmpegRoot = Join-Path $ToolsRoot "ffmpeg"
 $FfmpegBin = Join-Path $FfmpegRoot "bin"
 $FfmpegLocationFile = Join-Path $ToolsRoot "ffmpeg-location.txt"
+$DenoRoot = Join-Path $ToolsRoot "deno"
+$DenoExe = Join-Path $DenoRoot "deno.exe"
 
 function Test-PythonCandidate {
     param(
@@ -109,6 +111,26 @@ function Find-Ffmpeg {
     return $null
 }
 
+function Test-Deno {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        $Output = @(& $Path --version 2>&1)
+        if ($LASTEXITCODE -ne 0 -or [string]$Output[0] -notmatch '^deno (\d+)\.(\d+)\.') { return $false }
+        return ([int]$Matches[1] -gt 2 -or ([int]$Matches[1] -eq 2 -and [int]$Matches[2] -ge 3))
+    } catch {
+        return $false
+    }
+}
+
+function Find-Deno {
+    $Commands = @(Get-Command deno.exe -CommandType Application -All -ErrorAction SilentlyContinue)
+    foreach ($Command in $Commands) {
+        if (Test-Deno -Path $Command.Source) { return $Command.Source }
+    }
+    if ((Test-Path -LiteralPath $DenoExe -PathType Leaf) -and (Test-Deno -Path $DenoExe)) { return $DenoExe }
+    return $null
+}
+
 function Install-LocalFfmpeg {
     $Architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
     if ($Architecture -notin @("X64", "Arm64")) {
@@ -160,6 +182,48 @@ function Install-LocalFfmpeg {
     }
 }
 
+function Install-LocalDeno {
+    $Architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    if ($Architecture -eq "X64") {
+        $Asset = "deno-x86_64-pc-windows-msvc.zip"
+    } elseif ($Architecture -eq "Arm64") {
+        $Asset = "deno-aarch64-pc-windows-msvc.zip"
+    } else {
+        throw "Download automatico do Deno nao disponivel para arquitetura $Architecture."
+    }
+
+    $Answer = Read-Host "Deno 2.3+ nao foi encontrado. Deseja baixar uma copia local para o yt-dlp? [S/N]"
+    if ($Answer.Trim().ToLowerInvariant() -notin @("s", "sim", "y", "yes")) {
+        throw "Instalacao cancelada: o YouTube requer um runtime JavaScript suportado."
+    }
+
+    $Archive = Join-Path $ToolsRoot "deno.zip"
+    $DownloadUrl = "https://github.com/denoland/deno/releases/latest/download/$Asset"
+    New-Item -ItemType Directory -Force -Path $ToolsRoot, $DenoRoot | Out-Null
+    if (Test-Path -LiteralPath $Archive) { Remove-Item -LiteralPath $Archive -Force }
+
+    try {
+        for ($Attempt = 1; $Attempt -le 3; $Attempt++) {
+            try {
+                Write-Host "Baixando Deno (tentativa $Attempt de 3)..."
+                Invoke-WebRequest -Uri $DownloadUrl -OutFile $Archive -UseBasicParsing -TimeoutSec 120
+                break
+            } catch {
+                if (Test-Path -LiteralPath $Archive) { Remove-Item -LiteralPath $Archive -Force }
+                if ($Attempt -eq 3) {
+                    throw "Falha ao baixar Deno. Verifique a internet, proxy ou firewall. Detalhes: $($_.Exception.Message)"
+                }
+                Start-Sleep -Seconds 2
+            }
+        }
+        Expand-Archive -LiteralPath $Archive -DestinationPath $DenoRoot -Force
+        if (-not (Test-Deno -Path $DenoExe)) { throw "Deno foi extraido, mas nao passou na verificacao ou e anterior a 2.3." }
+        Write-Host "Deno instalado localmente em: $DenoExe"
+    } finally {
+        if (Test-Path -LiteralPath $Archive) { Remove-Item -LiteralPath $Archive -Force }
+    }
+}
+
 Set-Location $ProjectRoot
 if (Test-Path -LiteralPath $VenvPython -PathType Leaf) {
     $VenvInfo = Test-PythonCandidate -Executable $VenvPython
@@ -197,5 +261,13 @@ if ($FfmpegInfo.Source -eq "WinGet" -and $FfmpegInfo.Directory) {
 
 Write-Host "FFmpeg validado ($($FfmpegInfo.Source)): $($FfmpegInfo.Ffmpeg)"
 Write-Host "FFprobe validado ($($FfmpegInfo.Source)): $($FfmpegInfo.Ffprobe)"
+
+$DenoPath = Find-Deno
+if (-not $DenoPath) {
+    Install-LocalDeno
+    $DenoPath = Find-Deno
+}
+if (-not $DenoPath) { throw "Deno 2.3 ou superior continua indisponivel apos a instalacao." }
+Write-Host "Deno validado: $DenoPath"
 Write-Host ""
 Write-Host "Instalacao concluida. Execute .\run.bat"

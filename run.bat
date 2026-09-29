@@ -3,9 +3,15 @@ setlocal
 cd /d "%~dp0"
 
 :verificar_instalacao
-if exist ".venv\Scripts\activate.bat" if exist ".venv\Scripts\parallel-ytdlp.exe" goto executar
+if not exist ".venv\Scripts\activate.bat" goto precisa_instalar
+if not exist ".venv\Scripts\parallel-ytdlp.exe" goto precisa_instalar
+if exist "tools\deno\deno.exe" goto executar
+where deno.exe >nul 2>&1
+if not errorlevel 1 goto executar
 
-echo O projeto ainda nao foi instalado.
+:precisa_instalar
+
+echo O ambiente do projeto ainda nao foi configurado completamente.
 choice /C SN /N /M "Deseja executar a instalacao agora? [S/N]: "
 if errorlevel 2 exit /b 1
 

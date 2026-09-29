@@ -30,3 +30,5 @@ Os arquivos são salvos em `downloads/`.
 
 O instalador valida Python, FFmpeg e FFprobe executando-os, reconhece instalações do FFmpeg feitas pelo WinGet e pede confirmação antes de baixar uma cópia local. Em caso de falha de rede, tenta o download novamente e apresenta uma mensagem específica.
 
+Para downloads do YouTube, o instalador também valida Deno 2.3+ e oferece uma cópia portátil em `tools/deno/` quando necessário. O programa primeiro tenta todos os downloads sem autenticação. Se o YouTube exigir login em um vídeo ou em itens de uma playlist, explica os riscos, solicita consentimento uma única vez e repete somente as falhas de autenticação usando cookies de Chrome, Edge, Firefox ou Brave. Os cookies não são exportados para arquivo. Para reduzir o risco de limitação da conta, prefira vídeos individuais a playlists e evite grandes volumes de downloads paralelos.
+

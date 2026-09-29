@@ -72,6 +72,84 @@ def encontrar_ffmpeg():
     return None
 
 
+def _deno_valido(caminho):
+    try:
+        resultado = subprocess.run(
+            [str(caminho), "--version"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        primeira_linha = resultado.stdout.splitlines()[0]
+        versao = primeira_linha.removeprefix("deno ").split(".")
+        return len(versao) >= 2 and (int(versao[0]), int(versao[1])) >= (2, 3)
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return False
+
+
+def encontrar_deno():
+    deno_path = shutil.which("deno")
+    if deno_path and _deno_valido(deno_path):
+        return str(Path(deno_path).resolve())
+
+    candidatos = [
+        Path.cwd() / "tools" / "deno" / "deno.exe",
+        Path(__file__).resolve().parents[2] / "tools" / "deno" / "deno.exe",
+    ]
+    for candidato in candidatos:
+        if _deno_valido(candidato):
+            return str(candidato)
+    return None
+
+
+def erro_exige_cookies(erro):
+    mensagem = str(erro).lower()
+    return any(
+        trecho in mensagem
+        for trecho in (
+            "sign in to confirm you’re not a bot",
+            "sign in to confirm you're not a bot",
+            "use --cookies-from-browser",
+            "login required",
+        )
+    )
+
+
+def configurar_cookies_com_consentimento():
+    print("\n" + "=" * 60)
+    print("AUTENTICAÇÃO SOLICITADA PELO YOUTUBE")
+    print("=" * 60)
+    print(
+        "\nO YouTube bloqueou o acesso sem autenticação. Para continuar, "
+        "o programa precisa ler temporariamente os cookies de uma sessão "
+        "já conectada no seu navegador."
+    )
+    print("\nRiscos importantes:")
+    print("- O YouTube pode limitar, suspender ou banir temporária ou permanentemente a conta.")
+    print("- Playlists e downloads paralelos geram muitas requisições e aumentam esse risco.")
+    print("- Prefira baixar vídeos individuais e evite executar muitos downloads seguidos.")
+    print("- Use cookies apenas quando necessário e somente para conteúdo que você pode baixar.")
+    print("- O programa não exportará os cookies para um arquivo, mas terá acesso à sessão durante a execução.")
+
+    resposta = input("\nVocê entende e aceita esses riscos para continuar? [s/n]: ").strip().lower()
+    if resposta not in ("s", "sim"):
+        print("\nOperação cancelada. Os cookies do navegador não foram acessados.")
+        return None
+
+    print("\nNavegador com uma sessão conectada ao YouTube:")
+    print("1 - Chrome")
+    print("2 - Edge")
+    print("3 - Firefox")
+    print("4 - Brave")
+    escolha = input("\nEscolha: ").strip()
+    navegador = {"1": "chrome", "2": "edge", "3": "firefox", "4": "brave"}.get(escolha)
+    if not navegador:
+        print("\nOpção inválida. Operação cancelada.")
+        return None
+    return {"cookiesfrombrowser": (navegador,)}
+
+
 def configurar_download():
     print("\nTipo de download:")
     print("1 - Vídeo + Áudio")
@@ -177,16 +255,18 @@ def baixar_item(item, configuracao, ffmpeg_location):
             print(f"[{indice:03d}] Iniciando: {titulo}")
         with yt_dlp.YoutubeDL(opcoes) as ydl:
             ydl.download([url])
-        return indice, titulo, True, item
+        return indice, titulo, True, item, None
     except Exception as erro:
         with print_lock:
             print(f"\nERRO [{indice:03d}] {titulo}\n{erro}\n")
-        return indice, titulo, False, item
+        return indice, titulo, False, item, str(erro)
 
 
-def analisar_url(url):
+def analisar_url(url, opcoes_comuns=None):
     print("\nAnalisando URL...\n")
-    with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True, "skip_download": True}) as ydl:
+    opcoes = {"quiet": True, "extract_flat": True, "skip_download": True}
+    opcoes.update(opcoes_comuns or {})
+    with yt_dlp.YoutubeDL(opcoes) as ydl:
         info = ydl.extract_info(url, download=False)
     if not info:
         raise RuntimeError("Não foi possível obter informações da URL.")
@@ -230,15 +310,66 @@ def mostrar_falhas(falhas):
         print(f"{indice:03d} - {titulo}")
 
 
+def tratar_falhas_de_autenticacao(resultados, configuracao, ffmpeg_location):
+    falhas_login = [
+        resultado
+        for resultado in resultados
+        if not resultado[2] and erro_exige_cookies(resultado[4])
+    ]
+    if not falhas_login:
+        return resultados
+
+    print(
+        f"\nO YouTube exigiu autenticação em "
+        f"{len(falhas_login)} download(s)."
+    )
+    opcoes_cookies = configurar_cookies_com_consentimento()
+    if not opcoes_cookies:
+        return resultados
+
+    configuracao.update(opcoes_cookies)
+    print("\n" + "=" * 60)
+    print("REPETINDO SOMENTE AS FALHAS DE AUTENTICAÇÃO")
+    print("=" * 60 + "\n")
+    resultados_login = baixar_items(
+        [resultado[3] for resultado in falhas_login],
+        configuracao,
+        ffmpeg_location,
+    )
+    ids_login = {id(resultado) for resultado in falhas_login}
+    resultados_preservados = [
+        resultado for resultado in resultados if id(resultado) not in ids_login
+    ]
+    return resultados_preservados + resultados_login
+
+
 def tentar_novamente(falhas, configuracao, ffmpeg_location):
     while falhas:
         mostrar_falhas(falhas)
+
+        falhas_login = [
+            resultado for resultado in falhas if erro_exige_cookies(resultado[4])
+        ]
+        falhas_repetiveis = [
+            resultado for resultado in falhas if not erro_exige_cookies(resultado[4])
+        ]
+        if not falhas_repetiveis:
+            print(
+                "\nAs falhas restantes exigem autenticação e não serão "
+                "repetidas sem consentimento e cookies válidos."
+            )
+            break
+
         resposta = input("\nDeseja tentar baixar novamente apenas os que falharam? [s/n]: ").strip().lower()
         if resposta not in ["s", "sim"]:
             break
         print("\n" + "=" * 60 + "\nTENTANDO NOVAMENTE\n" + "=" * 60 + "\n")
-        resultados = baixar_items([resultado[3] for resultado in falhas], configuracao, ffmpeg_location)
-        falhas = [resultado for resultado in resultados if not resultado[2]]
+        resultados = baixar_items(
+            [resultado[3] for resultado in falhas_repetiveis],
+            configuracao,
+            ffmpeg_location,
+        )
+        falhas = falhas_login + [resultado for resultado in resultados if not resultado[2]]
         sucessos = [resultado for resultado in resultados if resultado[2]]
         print(f"\nNesta tentativa:\nSucessos: {len(sucessos)}\nFalhas: {len(falhas)}")
         if not falhas:
@@ -256,15 +387,36 @@ def main():
     else:
         print("\nFFmpeg e FFprobe encontrados no PATH.")
 
+    deno_path = encontrar_deno()
+    opcoes_comuns = {}
+    if deno_path:
+        print(f"Deno: {deno_path}")
+        opcoes_comuns["js_runtimes"] = {"deno": {"path": deno_path}}
+    else:
+        print("Aviso: Deno 2.3+ não foi encontrado. Execute setup.ps1.")
+
     url = input("\nURL do vídeo ou playlist: ").strip()
     configuracao = configurar_download()
     os.makedirs(PASTA_DOWNLOAD, exist_ok=True)
 
     try:
-        tipo, titulo, items = analisar_url(url)
+        tipo, titulo, items = analisar_url(url, opcoes_comuns)
     except Exception as erro:
-        print(f"\nErro ao analisar URL:\n{erro}")
-        return
+        if not erro_exige_cookies(erro):
+            print(f"\nErro ao analisar URL:\n{erro}")
+            return
+
+        opcoes_cookies = configurar_cookies_com_consentimento()
+        if not opcoes_cookies:
+            return
+        opcoes_comuns.update(opcoes_cookies)
+        try:
+            tipo, titulo, items = analisar_url(url, opcoes_comuns)
+        except Exception as erro_autenticado:
+            print(f"\nErro ao analisar URL mesmo com autenticação:\n{erro_autenticado}")
+            return
+
+    configuracao.update(opcoes_comuns)
 
     if tipo == "playlist":
         print(f"\nPlaylist detectada.\nNome: {titulo}\nVídeos: {len(items)}")
@@ -274,6 +426,11 @@ def main():
     print("\n" + "=" * 60 + "\nIniciando download...\n" + "=" * 60 + "\n")
 
     resultados = baixar_items(items, configuracao, ffmpeg_location)
+    resultados = tratar_falhas_de_autenticacao(
+        resultados,
+        configuracao,
+        ffmpeg_location,
+    )
     sucessos = [resultado for resultado in resultados if resultado[2]]
     falhas = [resultado for resultado in resultados if not resultado[2]]
     print("\n" + "=" * 60 + "\nPRIMEIRA TENTATIVA FINALIZADA\n" + "=" * 60)
