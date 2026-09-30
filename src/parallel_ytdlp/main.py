@@ -4,26 +4,57 @@ import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any, Callable, Iterable, Literal, Mapping, Sequence, TypeAlias, TypedDict
 from urllib.parse import urlparse
 
 import yt_dlp
 
+CategoriaErro: TypeAlias = Literal[
+    "autenticacao",
+    "limite",
+    "privado",
+    "regiao",
+    "indisponivel",
+    "rede",
+    "formato",
+    "ffmpeg",
+    "desconhecido",
+]
+TipoConteudo: TypeAlias = Literal["video", "colecao"]
+ConfiguracaoYtdlp: TypeAlias = dict[str, Any]
+CaminhoExecutavel: TypeAlias = str | os.PathLike[str]
 
-MAX_DOWNLOADS = 4
-FRAGMENTOS = 4
-PLATAFORMAS_CONSERVADORAS = {
+class ItemDownload(TypedDict):
+    indice: int
+    titulo: str
+    url: str
+    plataforma: str
+
+ResultadoDownload: TypeAlias = tuple[
+    int,
+    str,
+    bool,
+    ItemDownload,
+    str | None,
+    CategoriaErro | None,
+]
+ResultadoAnalise: TypeAlias = tuple[TipoConteudo, str, list[ItemDownload], str]
+HookProgresso: TypeAlias = Callable[[dict[str, Any]], None]
+
+MAX_DOWNLOADS: int = 4
+FRAGMENTOS: int = 4
+PLATAFORMAS_CONSERVADORAS: set[str] = {
     "facebook",
     "instagram",
     "tiktok",
     "twitter",
     "x/twitter",
 }
-PASTA_DOWNLOAD = "downloads"
+PASTA_DOWNLOAD: str = "downloads"
 
 print_lock = threading.Lock()
 
-
-def _executavel_funciona(caminho):
+def _executavel_funciona(caminho: CaminhoExecutavel) -> bool:
     try:
         subprocess.run(
             [str(caminho), "-version"],
@@ -37,14 +68,14 @@ def _executavel_funciona(caminho):
         return False
 
 
-def _diretorio_ffmpeg_valido(bin_dir):
+def _diretorio_ffmpeg_valido(bin_dir: CaminhoExecutavel) -> bool:
     bin_dir = Path(bin_dir)
     ffmpeg = bin_dir / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
     ffprobe = bin_dir / ("ffprobe.exe" if os.name == "nt" else "ffprobe")
     return _executavel_funciona(ffmpeg) and _executavel_funciona(ffprobe)
 
 
-def encontrar_ffmpeg():
+def encontrar_ffmpeg() -> str | None:
     """Retorna a localização do FFmpeg; string vazia significa usar o PATH."""
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
@@ -80,7 +111,7 @@ def encontrar_ffmpeg():
     return None
 
 
-def _deno_valido(caminho):
+def _deno_valido(caminho: CaminhoExecutavel) -> bool:
     try:
         resultado = subprocess.run(
             [str(caminho), "--version"],
@@ -96,7 +127,7 @@ def _deno_valido(caminho):
         return False
 
 
-def encontrar_deno():
+def encontrar_deno() -> str | None:
     deno_path = shutil.which("deno")
     if deno_path and _deno_valido(deno_path):
         return str(Path(deno_path).resolve())
@@ -111,9 +142,9 @@ def encontrar_deno():
     return None
 
 
-def classificar_erro(erro):
+def classificar_erro(erro: object) -> CategoriaErro:
     mensagem = str(erro).lower()
-    categorias = {
+    categorias: dict[CategoriaErro, tuple[str, ...]] = {
         "autenticacao": (
             "sign in to confirm you’re not a bot",
             "sign in to confirm you're not a bot",
@@ -172,11 +203,11 @@ def classificar_erro(erro):
     return "desconhecido"
 
 
-def erro_exige_cookies(erro):
+def erro_exige_cookies(erro: object) -> bool:
     return classificar_erro(erro) == "autenticacao"
 
 
-def plataforma_da_url(url):
+def plataforma_da_url(url: str) -> str:
     try:
         host = urlparse(url).hostname or "plataforma"
     except ValueError:
@@ -184,10 +215,10 @@ def plataforma_da_url(url):
     return host.removeprefix("www.")
 
 
-def nome_plataforma(info, padrao="Plataforma"):
+def nome_plataforma(info: Mapping[str, Any], padrao: str = "Plataforma") -> str:
     extrator = str(info.get("extractor_key") or info.get("extractor") or padrao)
     normalizado = extrator.lower()
-    nomes = (
+    nomes: tuple[tuple[str, str], ...] = (
         ("youtube", "YouTube"),
         ("soundcloud", "SoundCloud"),
         ("tiktok", "TikTok"),
@@ -205,7 +236,7 @@ def nome_plataforma(info, padrao="Plataforma"):
     return extrator
 
 
-def obter_url_item(video):
+def obter_url_item(video: Mapping[str, Any]) -> str | None:
     for campo in ("webpage_url", "original_url", "url"):
         valor = video.get(campo)
         if isinstance(valor, str) and valor.startswith(("http://", "https://")):
@@ -218,7 +249,10 @@ def obter_url_item(video):
     return None
 
 
-def configuracao_adaptativa(items, autenticado=False):
+def configuracao_adaptativa(
+    items: Sequence[ItemDownload],
+    autenticado: bool = False,
+) -> tuple[int, int, str]:
     quantidade = len(items)
     if quantidade <= 1:
         return 1, FRAGMENTOS, "item individual"
@@ -236,7 +270,9 @@ def configuracao_adaptativa(items, autenticado=False):
     return min(MAX_DOWNLOADS, quantidade), 2, "coleção sem autenticação"
 
 
-def configurar_cookies_com_consentimento(plataformas=None):
+def configurar_cookies_com_consentimento(
+    plataformas: Iterable[str] | None = None,
+) -> ConfiguracaoYtdlp | None:
     plataformas = sorted({str(item) for item in (plataformas or []) if item})
     alvo = ", ".join(plataformas) if plataformas else "a plataforma"
     print("\n" + "=" * 60)
@@ -272,7 +308,7 @@ def configurar_cookies_com_consentimento(plataformas=None):
     return {"cookiesfrombrowser": (navegador,)}
 
 
-def configurar_download():
+def configurar_download() -> ConfiguracaoYtdlp:
     print("\nTipo de download:")
     print("1 - Vídeo + Áudio")
     print("2 - Somente Vídeo")
@@ -349,8 +385,8 @@ def configurar_download():
     return {"format": "bestvideo+bestaudio/best", "merge_output_format": "mp4"}
 
 
-def progresso(indice, titulo):
-    def hook(d):
+def progresso(indice: int, titulo: str) -> HookProgresso:
+    def hook(d: dict[str, Any]) -> None:
         if d["status"] == "finished":
             with print_lock:
                 print(f"[{indice:03d}] Download concluído: {titulo}")
@@ -358,9 +394,14 @@ def progresso(indice, titulo):
     return hook
 
 
-def baixar_item(item, configuracao, ffmpeg_location, fragmentos):
+def baixar_item(
+    item: ItemDownload,
+    configuracao: ConfiguracaoYtdlp,
+    ffmpeg_location: str | None,
+    fragmentos: int,
+) -> ResultadoDownload:
     indice, titulo, url = item["indice"], item["titulo"], item["url"]
-    opcoes = {
+    opcoes: ConfiguracaoYtdlp = {
         "outtmpl": os.path.join(PASTA_DOWNLOAD, f"{indice:03d} - %(title)s.%(ext)s"),
         "concurrent_fragment_downloads": fragmentos,
         "noplaylist": True,
@@ -384,9 +425,12 @@ def baixar_item(item, configuracao, ffmpeg_location, fragmentos):
         return indice, titulo, False, item, str(erro), classificar_erro(erro)
 
 
-def analisar_url(url, opcoes_comuns=None):
+def analisar_url(
+    url: str,
+    opcoes_comuns: ConfiguracaoYtdlp | None = None,
+) -> ResultadoAnalise:
     print("\nAnalisando URL...\n")
-    opcoes = {"quiet": True, "extract_flat": True, "skip_download": True}
+    opcoes: ConfiguracaoYtdlp = {"quiet": True, "extract_flat": True, "skip_download": True}
     opcoes.update(opcoes_comuns or {})
     with yt_dlp.YoutubeDL(opcoes) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -396,7 +440,7 @@ def analisar_url(url, opcoes_comuns=None):
     plataforma = nome_plataforma(info, plataforma_da_url(url))
 
     if info.get("entries"):
-        items = []
+        items: list[ItemDownload] = []
         ignorados = 0
         for indice, video in enumerate(info["entries"], start=1):
             if not video:
@@ -421,7 +465,7 @@ def analisar_url(url, opcoes_comuns=None):
         return "colecao", info.get("title", "Coleção"), items, plataforma
 
     titulo = info.get("title", "Vídeo")
-    item = {
+    item: ItemDownload = {
         "indice": 1,
         "titulo": titulo,
         "url": info.get("webpage_url") or info.get("original_url") or url,
@@ -430,7 +474,11 @@ def analisar_url(url, opcoes_comuns=None):
     return "video", titulo, [item], plataforma
 
 
-def baixar_items(items, configuracao, ffmpeg_location):
+def baixar_items(
+    items: list[ItemDownload],
+    configuracao: ConfiguracaoYtdlp,
+    ffmpeg_location: str | None,
+) -> list[ResultadoDownload]:
     autenticado = bool(configuracao.get("cookiesfrombrowser") or configuracao.get("cookiefile"))
     max_downloads, fragmentos, motivo = configuracao_adaptativa(items, autenticado)
     print(
@@ -440,7 +488,7 @@ def baixar_items(items, configuracao, ffmpeg_location):
     if len(items) == 1:
         return [baixar_item(items[0], configuracao, ffmpeg_location, fragmentos)]
 
-    resultados = []
+    resultados: list[ResultadoDownload] = []
     with ThreadPoolExecutor(max_workers=max_downloads) as executor:
         futuros = [
             executor.submit(baixar_item, item, configuracao, ffmpeg_location, fragmentos)
@@ -454,13 +502,17 @@ def baixar_items(items, configuracao, ffmpeg_location):
     return resultados
 
 
-def mostrar_falhas(falhas):
+def mostrar_falhas(falhas: Sequence[ResultadoDownload]) -> None:
     print(f"\nFalharam {len(falhas)} download(s):")
     for indice, titulo, _, _, _, categoria in falhas:
         print(f"{indice:03d} - {titulo} [{categoria or 'desconhecido'}]")
 
 
-def tratar_falhas_de_autenticacao(resultados, configuracao, ffmpeg_location):
+def tratar_falhas_de_autenticacao(
+    resultados: list[ResultadoDownload],
+    configuracao: ConfiguracaoYtdlp,
+    ffmpeg_location: str | None,
+) -> list[ResultadoDownload]:
     falhas_login = [
         resultado
         for resultado in resultados
@@ -491,7 +543,11 @@ def tratar_falhas_de_autenticacao(resultados, configuracao, ffmpeg_location):
     return resultados_preservados + resultados_login
 
 
-def tentar_novamente(falhas, configuracao, ffmpeg_location):
+def tentar_novamente(
+    falhas: list[ResultadoDownload],
+    configuracao: ConfiguracaoYtdlp,
+    ffmpeg_location: str | None,
+) -> list[ResultadoDownload]:
     while falhas:
         mostrar_falhas(falhas)
 
@@ -534,7 +590,7 @@ def tentar_novamente(falhas, configuracao, ffmpeg_location):
     return falhas
 
 
-def main():
+def main() -> None:
     print("=" * 60 + "\n      YT-DLP DOWNLOADER\n" + "=" * 60)
     ffmpeg_location = encontrar_ffmpeg()
     if ffmpeg_location is None:
@@ -602,7 +658,6 @@ def main():
     else:
         print("\nTodos os downloads foram concluídos.")
     print(f"\nArquivos salvos em:\n{os.path.abspath(PASTA_DOWNLOAD)}")
-
 
 if __name__ == "__main__":
     main()
