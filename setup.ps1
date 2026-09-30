@@ -194,7 +194,8 @@ function Install-LocalDeno {
 
     $Answer = Read-Host "Deno 2.3+ nao foi encontrado. Deseja baixar uma copia local para o yt-dlp? [S/N]"
     if ($Answer.Trim().ToLowerInvariant() -notin @("s", "sim", "y", "yes")) {
-        throw "Instalacao cancelada: o YouTube requer um runtime JavaScript suportado."
+        Write-Host "Deno nao sera instalado. Downloads do YouTube podem ficar limitados."
+        return $false
     }
 
     $Archive = Join-Path $ToolsRoot "deno.zip"
@@ -222,6 +223,7 @@ function Install-LocalDeno {
     } finally {
         if (Test-Path -LiteralPath $Archive) { Remove-Item -LiteralPath $Archive -Force }
     }
+    return $true
 }
 
 Set-Location $ProjectRoot
@@ -264,10 +266,13 @@ Write-Host "FFprobe validado ($($FfmpegInfo.Source)): $($FfmpegInfo.Ffprobe)"
 
 $DenoPath = Find-Deno
 if (-not $DenoPath) {
-    Install-LocalDeno
+    $null = Install-LocalDeno
     $DenoPath = Find-Deno
 }
-if (-not $DenoPath) { throw "Deno 2.3 ou superior continua indisponivel apos a instalacao." }
-Write-Host "Deno validado: $DenoPath"
+if ($DenoPath) {
+    Write-Host "Deno validado: $DenoPath"
+} else {
+    Write-Host "Aviso: Deno 2.3+ indisponivel; outras plataformas continuam utilizaveis."
+}
 Write-Host ""
 Write-Host "Instalacao concluida. Execute .\run.bat"

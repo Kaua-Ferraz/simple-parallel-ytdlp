@@ -5,9 +5,7 @@ cd /d "%~dp0"
 :verificar_instalacao
 if not exist ".venv\Scripts\activate.bat" goto precisa_instalar
 if not exist ".venv\Scripts\parallel-ytdlp.exe" goto precisa_instalar
-if exist "tools\deno\deno.exe" goto executar
-where deno.exe >nul 2>&1
-if not errorlevel 1 goto executar
+goto executar
 
 :precisa_instalar
 

@@ -1,6 +1,6 @@
 # Simple Parallel yt-dlp
 
-Downloader interativo de vídeos e playlists que executa vários downloads em paralelo.
+Downloader interativo de vídeos e coleções que usa os extratores do yt-dlp e executa vários downloads em paralelo.
 
 ## Uso no Windows
 
@@ -30,5 +30,16 @@ Os arquivos são salvos em `downloads/`.
 
 O instalador valida Python, FFmpeg e FFprobe executando-os, reconhece instalações do FFmpeg feitas pelo WinGet e pede confirmação antes de baixar uma cópia local. Em caso de falha de rede, tenta o download novamente e apresenta uma mensagem específica.
 
-Para downloads do YouTube, o instalador também valida Deno 2.3+ e oferece uma cópia portátil em `tools/deno/` quando necessário. O programa primeiro tenta todos os downloads sem autenticação. Se o YouTube exigir login em um vídeo ou em itens de uma playlist, explica os riscos, solicita consentimento uma única vez e repete somente as falhas de autenticação usando cookies de Chrome, Edge, Firefox ou Brave. Os cookies não são exportados para arquivo. Para reduzir o risco de limitação da conta, prefira vídeos individuais a playlists e evite grandes volumes de downloads paralelos.
+Para downloads do YouTube, o instalador também valida Deno 2.3+ e oferece uma cópia portátil opcional em `tools/deno/`. Recusar o Deno não impede o uso das outras plataformas.
+
+O programa deixa o yt-dlp identificar a plataforma e pode trabalhar com vídeos, áudios, playlists, álbuns, perfis e outras coleções aceitas pelos extratores instalados. Exemplos incluem YouTube, TikTok, X/Twitter, Instagram, SoundCloud, Vimeo, Twitch, Reddit, Facebook e Bandcamp; o funcionamento efetivo depende do suporte atual do yt-dlp e das regras de acesso de cada serviço.
+
+O paralelismo é adaptativo:
+
+- item individual: 1 download com até 4 fragmentos;
+- coleção comum sem autenticação: até 4 downloads, com 2 fragmentos cada;
+- Instagram, TikTok, X/Twitter ou Facebook: até 2 downloads, com 2 fragmentos cada;
+- coleção autenticada: até 2 downloads, com 2 fragmentos cada.
+
+O programa primeiro tenta os downloads sem autenticação. Se uma plataforma exigir login, explica os riscos, solicita consentimento uma única vez e repete somente as falhas de autenticação usando cookies de Chrome, Edge, Firefox ou Brave. Os cookies não são exportados para arquivo. Falhas de limite, conteúdo privado ou removido, bloqueio regional, formato e FFmpeg não são repetidas imediatamente como se fossem erros temporários.
 
